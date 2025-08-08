@@ -1,0 +1,201 @@
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Procrastinator's Timer</title>
+  <style>
+    :root{--bg:#0f1724;--card:#0b1220;--accent:#ffcc00;--muted:#94a3b8}
+    *{box-sizing:border-box}
+    html,body{height:100%;margin:0;font-family:Inter,ui-sans-serif,system-ui,Segoe UI,Roboto,'Helvetica Neue',Arial;color:#e6eef6;background:linear-gradient(180deg,#071021 0%, #071525 60%)}
+
+    .wrap{min-height:100vh;display:flex;align-items:center;justify-content:center;padding:32px}
+    .card{width:100%;max-width:720px;background:linear-gradient(180deg,rgba(255,255,255,0.02), rgba(255,255,255,0.01));border-radius:14px;padding:26px;box-shadow:0 10px 30px rgba(2,6,23,0.6);border:1px solid rgba(255,255,255,0.03)}
+
+    h1{margin:0 0 8px;font-size:20px}
+    p.lead{margin:0 0 18px;color:var(--muted)}
+
+    .controls{display:flex;gap:12px;align-items:center}
+    input[type=number]{width:120px;padding:10px 12px;border-radius:8px;border:1px solid rgba(255,255,255,0.04);background:transparent;color:inherit;font-size:16px}
+    .btn{padding:10px 14px;border-radius:10px;border:0;background:var(--accent);color:#071021;font-weight:700;cursor:pointer}
+    .btn.ghost{background:transparent;color:var(--accent);border:1px solid rgba(255,204,0,0.12)}
+    .status{margin-top:18px;padding:16px;border-radius:10px;background:linear-gradient(90deg, rgba(255,255,255,0.015), rgba(255,255,255,0.01));font-size:18px;min-height:48px;display:flex;align-items:center;gap:12px}
+
+    .excuse{font-weight:700;color:#ffd966}
+    .timer{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;margin-left:auto;font-size:20px}
+
+    .small{font-size:13px;color:var(--muted);margin-top:10px}
+
+    .actions{display:flex;gap:8px;margin-top:14px}
+    .snooze{background:#1b2836;color:#e6eef6;border-radius:8px;padding:8px 10px;border:0;cursor:pointer}
+
+    .log{margin-top:16px;max-height:140px;overflow:auto;padding:10px;border-radius:8px;background:rgba(255,255,255,0.01);font-size:13px;color:var(--muted)}
+
+    /* playful cursor dancing */
+    .wiggle{display:inline-block;animation:wig 1200ms ease-in-out infinite}
+    @keyframes wig{0%{transform:translateY(0)}25%{transform:translateY(-4px) rotate(-2deg)}50%{transform:translateY(0)}75%{transform:translateY(-2px) rotate(2deg)}100%{transform:translateY(0)} }
+
+    footer{margin-top:18px;color:var(--muted);font-size:13px}
+
+    @media (max-width:520px){.controls{flex-direction:column;align-items:stretch}input[type=number]{width:100%}.timer{margin-left:0}}
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="card">
+      <h1>Procrastinator's Timer <span class="wiggle">🕒</span></h1>
+      <p class="lead">Set a time. The app will thoughtfully delay itself with excuses before (maybe) starting. For true results, resist the urge to beg it to begin.</p>
+
+      <div class="controls">
+        <input id="minutes" type="number" min="1" value="1" />
+        <button id="startBtn" class="btn">Start (maybe)</button>
+        <button id="begBtn" class="btn ghost">Beg to start now</button>
+        <div class="timer" id="display">--:--</div>
+      </div>
+
+      <div class="status" id="status">Ready to procrastinate.</div>
+
+      <div class="actions">
+        <button id="snoozeBtn" class="snooze" disabled>Snooze</button>
+        <button id="resetBtn" class="snooze" disabled>Reset</button>
+      </div>
+
+      <div class="small">Tip: press "Beg to start now" to skip excuses. Or don't—I'm not your boss.</div>
+
+      <div class="log" id="log"></div>
+
+      <footer>Built for delightful delay — local only, no telemetry. Want a darker theme or sound effects? Ask and ye shall receive.</footer>
+    </div>
+  </div>
+
+  <script>
+    // excuses, settings
+    const EXCUSES = [
+      "Just five more minutes...",
+      "I'll start after this one last scroll.",
+      "Maybe tomorrow is better.",
+      "Do I really need a timer?",
+      "Let me reorganize my tabs first...",
+      "Time is a flat circle—also a suggestion.",
+      "Starting... soonish.",
+      "Coffee first, productivity later.",
+      "My plant needs an encouraging word.",
+    ];
+
+    const minDelay = 2000; // each procrastination delay min (ms)
+    const maxDelay = 7000; // each procrastination delay max (ms)
+
+    // UI elements
+    const minutesInput = document.getElementById('minutes');
+    const startBtn = document.getElementById('startBtn');
+    const begBtn = document.getElementById('begBtn');
+    const status = document.getElementById('status');
+    const display = document.getElementById('display');
+    const snoozeBtn = document.getElementById('snoozeBtn');
+    const resetBtn = document.getElementById('resetBtn');
+    const logEl = document.getElementById('log');
+
+    let totalSeconds = 0;
+    let timerInterval = null;
+    let isProcrastinating = false;
+    let abortProcrastination = false;
+
+    function log(msg){
+      const time = new Date().toLocaleTimeString();
+      logEl.insertAdjacentHTML('afterbegin', `<div>\u25B6 [${time}] ${msg}</div>`);
+    }
+
+    function fmt(s){
+      const m = Math.floor(s/60).toString().padStart(2,'0');
+      const sec = Math.floor(s%60).toString().padStart(2,'0');
+      return `${m}:${sec}`;
+    }
+
+    function randomBetween(a,b){ return Math.floor(Math.random()*(b-a+1))+a }
+
+    function updateDisplay(){ display.textContent = totalSeconds>0 ? fmt(totalSeconds) : '--:--'; }
+
+    function startCountdown(){
+      if(timerInterval) clearInterval(timerInterval);
+      timerInterval = setInterval(()=>{
+        if(totalSeconds<=0){ clearInterval(timerInterval); timerInterval=null; status.textContent = "Done! You actually did it?"; snoozeBtn.disabled=true; resetBtn.disabled=false; log('Timer finished. Congrats.'); return; }
+        totalSeconds -= 1;
+        updateDisplay();
+        status.textContent = `Time left: ${fmt(totalSeconds)}`;
+      },1000);
+    }
+
+    async function procrastinate(shouldSkip=false){
+      // number of excuses
+      isProcrastinating = true;
+      abortProcrastination = false;
+      startBtn.disabled = true; begBtn.disabled = true; minutesInput.disabled = true; resetBtn.disabled = true;
+      snoozeBtn.disabled = true;
+
+      // decide how many delays (if beg -> 0)
+      let delays = shouldSkip ? 0 : randomBetween(2,5);
+      log(`Procrastination session started — ${delays} delay(s).`);
+
+      for(let i=0;i<delays;i++){
+        if(abortProcrastination) break;
+        const excuse = EXCUSES[Math.floor(Math.random()*EXCUSES.length)];
+        status.innerHTML = `<span class="excuse">${excuse}</span>`;
+        log(`Excuse: ${excuse}`);
+        // await a random delay
+        const time = randomBetween(minDelay,maxDelay);
+        await new Promise(resolve=>setTimeout(resolve,time));
+      }
+
+      isProcrastinating = false;
+      if(abortProcrastination){ status.textContent = 'Procrastination aborted. Fine. Starting now.'; }
+      else { status.textContent = '...Fine. Starting now.'; }
+
+      // small pause before starting
+      await new Promise(resolve=>setTimeout(resolve,700));
+
+      // enable timer controls and start
+      snoozeBtn.disabled = false; resetBtn.disabled = false; startBtn.disabled = true; begBtn.disabled=true; minutesInput.disabled=true;
+      startCountdown();
+    }
+
+    startBtn.addEventListener('click', ()=>{
+      const mins = Math.max(1, Math.floor(Number(minutesInput.value) || 1));
+      totalSeconds = mins*60;
+      updateDisplay();
+      procrastinate(false);
+    });
+
+    begBtn.addEventListener('click', ()=>{
+      // quick positive reinforcement
+      status.textContent = "Okay okay okay — starting now. (You begged.)";
+      const mins = Math.max(1, Math.floor(Number(minutesInput.value) || 1));
+      totalSeconds = mins*60; updateDisplay();
+      procrastinate(true);
+    });
+
+    snoozeBtn.addEventListener('click', ()=>{
+      if(!timerInterval) return;
+      const addSeconds = randomBetween(30,120);
+      totalSeconds += addSeconds;
+      status.textContent = `Snoozed +${Math.round(addSeconds)}s. Back to procrastinating (kinda).`;
+      updateDisplay();
+      log(`Snoozed +${addSeconds}s`);
+    });
+
+    resetBtn.addEventListener('click', ()=>{
+      if(timerInterval){ clearInterval(timerInterval); timerInterval=null; }
+      abortProcrastination = true; isProcrastinating=false;
+      totalSeconds = 0; updateDisplay();
+      status.textContent = 'Reset. You can try again when ready.';
+      startBtn.disabled = false; begBtn.disabled = false; minutesInput.disabled=false; snoozeBtn.disabled=true; resetBtn.disabled=true;
+      log('Reset by user.');
+    });
+
+    // initialize
+    updateDisplay();
+    log('Ready.');
+
+    // keyboard niceties: Enter to start
+    minutesInput.addEventListener('keydown', (e)=>{ if(e.key==='Enter') startBtn.click(); });
+  </script>
+</body>
+</html>
